@@ -1,18 +1,21 @@
 package semmiedev.disc_jockey.gui;
 
-import com.mojang.blaze3d.systems.RenderSystem;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.narration.NarrationMessageBuilder;
-import net.minecraft.client.gui.widget.EntryListWidget;
-import net.minecraft.util.Identifier;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.ObjectSelectionList;
+import net.minecraft.client.gui.narration.NarrationElementOutput;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.client.renderer.RenderPipelines;
+import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import org.jetbrains.annotations.Nullable;
+import org.jspecify.annotations.NonNull;
 import semmiedev.disc_jockey.Main;
 import semmiedev.disc_jockey.Song;
 
-public class SongListWidget extends EntryListWidget<SongListWidget.SongEntry> {
+public class SongListWidget extends ObjectSelectionList<SongListWidget.SongEntry> {
 
-    public SongListWidget(MinecraftClient client, int width, int height, int top, int itemHeight) {
+    public SongListWidget(Minecraft client, int width, int height, int top, int itemHeight) {
         super(client, width, height, top, itemHeight);
     }
 
@@ -22,26 +25,26 @@ public class SongListWidget extends EntryListWidget<SongListWidget.SongEntry> {
     }
 
     @Override
-    protected int getScrollbarX() {
+    protected int scrollBarX() {
         return width - 12;
     }
 
     @Override
     public void setSelected(@Nullable SongListWidget.SongEntry entry) {
-        SongListWidget.SongEntry selectedEntry = getSelectedOrNull();
+        SongListWidget.SongEntry selectedEntry = getSelected();
         if (selectedEntry != null) selectedEntry.selected = false;
         if (entry != null) entry.selected = true;
         super.setSelected(entry);
     }
 
     @Override
-    protected void appendClickableNarrations(NarrationMessageBuilder builder) {
+    public void updateWidgetNarration(@NonNull NarrationElementOutput builder) {
         // Who cares
     }
 
     // TODO: 6/2/2022 Add a delete icon
     public static class SongEntry extends Entry<SongEntry> {
-        private static final Identifier ICONS = Identifier.of(Main.MOD_ID, "textures/gui/icons.png");
+        private static final Identifier ICONS = Identifier.fromNamespaceAndPath(Main.MOD_ID, "textures/gui/icons.png");
 
         public final int index;
         public final Song song;
@@ -49,9 +52,10 @@ public class SongListWidget extends EntryListWidget<SongListWidget.SongEntry> {
         public boolean selected, favorite;
         public SongListWidget songListWidget;
 
-        private final MinecraftClient client = MinecraftClient.getInstance();
+        private final Minecraft client = Minecraft.getInstance();
 
-        private int x, y, entryWidth, entryHeight;
+        private int x;
+        private int y;
 
         public SongEntry(Song song, int index) {
             this.song = song;
@@ -59,23 +63,32 @@ public class SongListWidget extends EntryListWidget<SongListWidget.SongEntry> {
         }
 
         @Override
-        public void render(DrawContext context, int index, int y, int x, int entryWidth, int entryHeight, int mouseX, int mouseY, boolean hovered, float tickDelta) {
-            this.x = x; this.y = y; this.entryWidth = entryWidth; this.entryHeight = entryHeight;
-
-            if (selected) {
-                context.fill(x, y, x + entryWidth, y + entryHeight, 0xFFFFFF);
-                context.fill(x + 1, y + 1, x + entryWidth - 1, y + entryHeight - 1, 0x000000);
-            }
-
-            context.drawCenteredTextWithShadow(client.textRenderer, song.displayName, x + entryWidth / 2, y + 5, selected ? 0xFFFFFF : 0x808080);
-
-            RenderSystem.setShaderTexture(0, ICONS);
-            context.drawTexture(ICONS, x + 2, y + 2, (favorite ? 26 : 0) + (isOverFavoriteButton(mouseX, mouseY) ? 13 : 0), 0, 13, 12, 52, 12);
+        public @NonNull Component getNarration() {
+            return Component.empty();
         }
 
         @Override
-        public boolean mouseClicked(double mouseX, double mouseY, int button) {
-            if (isOverFavoriteButton(mouseX, mouseY)) {
+        public void extractContent(@NonNull GuiGraphicsExtractor context, int mouseX, int mouseY, boolean hovered, float tickDelta) {
+            this.x = getX(); this.y = getY();
+            int entryWidth = getWidth();
+            int entryHeight = getHeight();
+
+            if (selected) {
+                context.fill(x, y, x + entryWidth, y + entryHeight, 0xFFFFFFFF);
+                context.fill(x + 1, y + 1, x + entryWidth - 1, y + entryHeight - 1, 0xFF000000);
+            }
+
+            context.centeredText(client.font, song.displayName, x + entryWidth / 2, y + 5, selected ? 0xFFFFFFFF : 0xFF808080);
+
+            int u = (favorite ? 26 : 0) + (isOverFavoriteButton(mouseX, mouseY) ? 13 : 0);
+            context.blit(RenderPipelines.GUI_TEXTURED, ICONS, x + 2, y + 2, (float)u, 0.0f, 13, 12, 52, 12);
+        }
+
+        @Override
+        public boolean mouseClicked(MouseButtonEvent event, boolean something) {
+            double mouseX = event.x();
+            double mouseY = event.y();
+            if (mouseX > x + 2 && mouseX < x + 15 && mouseY > y + 2 && mouseY < y + 14) {
                 favorite = !favorite;
                 if (favorite) {
                     Main.config.favorites.add(song.fileName);
@@ -88,7 +101,7 @@ public class SongListWidget extends EntryListWidget<SongListWidget.SongEntry> {
             return true;
         }
 
-        private boolean isOverFavoriteButton(double mouseX, double mouseY) {
+        private boolean isOverFavoriteButton(int mouseX, int mouseY) {
             return mouseX > x + 2 && mouseX < x + 15 && mouseY > y + 2 && mouseY < y + 14;
         }
     }

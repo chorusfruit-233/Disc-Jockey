@@ -38,21 +38,6 @@ public class BinaryReader {
         return buffer.clear().put(readBytes(Float.BYTES)).rewind().getFloat();
     }
 
-    /*private int getStringLength() throws IOException {
-        int count = 0;
-        int shift = 0;
-        boolean more = true;
-        while (more) {
-            byte b = (byte) in.read();
-            count |= (b & 0x7F) << shift;
-            shift += 7;
-            if ((b & 0x80) == 0) {
-                more = false;
-            }
-        }
-        return count;
-    }*/
-
     public byte readByte() throws IOException {
         int b = in.read();
         if (b < 0) throw new EOFException();

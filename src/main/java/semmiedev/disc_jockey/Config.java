@@ -19,15 +19,11 @@ public class Config implements ConfigData {
 
         @Override
         public String toString() {
-            if(this == All) {
-                return "All (universal)";
-            }else if(this == v1_20_4_Or_Earlier) {
-                return "≤1.20.4";
-            }else if (this == v1_20_5_Or_Later) {
-                return "≥1.20.5";
-            }else {
-                return super.toString();
-            }
+            return switch (this) {
+                case All -> "All (universal)";
+                case v1_20_4_Or_Earlier -> "≤1.20.4";
+                case v1_20_5_Or_Later -> "≥1.20.5";
+            };
         }
     }
 
@@ -35,7 +31,7 @@ public class Config implements ConfigData {
     @ConfigEntry.Gui.Tooltip(count = 4)
     public ExpectedServerVersion expectedServerVersion = ExpectedServerVersion.All;
 
-    @ConfigEntry.Gui.Tooltip(count = 1)
+    @ConfigEntry.Gui.Tooltip()
     public float delayPlaybackStartBySecs = 0.0f;
 
     @ConfigEntry.Gui.Excluded

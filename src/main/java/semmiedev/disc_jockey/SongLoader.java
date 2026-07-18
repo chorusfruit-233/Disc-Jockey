@@ -1,8 +1,8 @@
 package semmiedev.disc_jockey;
 
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.toast.SystemToast;
-import net.minecraft.text.Text;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.components.toasts.SystemToast;
+import net.minecraft.network.chat.Component;
 import semmiedev.disc_jockey.gui.SongListWidget;
 
 import java.io.File;
@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.Objects;
 
 public class SongLoader {
     public static final ArrayList<Song> SONGS = new ArrayList<>();
@@ -20,12 +21,12 @@ public class SongLoader {
 
     public static void loadSongs() {
         if (loadingSongs) return;
-        new Thread(() -> {
+        Thread.startVirtualThread(() -> {
             loadingSongs = true;
             SONGS.clear();
             SONG_SUGGESTIONS.clear();
             SONG_SUGGESTIONS.add("Songs are loading, please wait");
-            for (File file : Main.songsFolder.listFiles()) {
+            for (File file : Objects.requireNonNull(Main.songsFolder.listFiles())) {
                 Song song = null;
                 try {
                     song = loadSong(file);
@@ -37,10 +38,10 @@ public class SongLoader {
             for (Song song : SONGS) SONG_SUGGESTIONS.add(song.displayName);
             Main.config.favorites.removeIf(favorite -> SongLoader.SONGS.stream().map(song -> song.fileName).noneMatch(favorite::equals));
 
-            if (showToast && MinecraftClient.getInstance().textRenderer != null) SystemToast.add(MinecraftClient.getInstance().getToastManager(), SystemToast.Type.PACK_LOAD_FAILURE, Main.NAME, Text.translatable(Main.MOD_ID+".loading_done"));
+            if (showToast) SystemToast.add(Minecraft.getInstance().gui.toastManager(), SystemToast.SystemToastId.PACK_LOAD_FAILURE, Main.NAME, Component.translatable(Main.MOD_ID + ".loading_done"));
             showToast = true;
             loadingSongs = false;
-        }).start();
+        });
     }
 
     public static Song loadSong(File file) throws IOException {
@@ -81,7 +82,7 @@ public class SongLoader {
                 song.loopStartTick = reader.readShort();
             }
 
-            song.displayName = song.name.replaceAll("\\s", "").isEmpty() ? song.fileName : song.name+" ("+song.fileName+")";
+            song.displayName = song.name.replaceAll("\\s", "").isEmpty() ? song.fileName : song.name + " (" + song.fileName + ")";
             song.entry = new SongListWidget.SongEntry(song, SONGS.size());
             song.entry.favorite = Main.config.favorites.contains(song.fileName);
             song.searchableFileName = song.fileName.toLowerCase().replaceAll("\\s", "");
