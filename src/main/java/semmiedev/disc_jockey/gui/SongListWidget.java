@@ -26,7 +26,7 @@ public class SongListWidget extends ObjectSelectionList<SongListWidget.SongEntry
 
     @Override
     protected int scrollBarX() {
-        return width - 12;
+        return getX() + width - 12;
     }
 
     @Override
@@ -46,7 +46,6 @@ public class SongListWidget extends ObjectSelectionList<SongListWidget.SongEntry
     public static class SongEntry extends Entry<SongEntry> {
         private static final Identifier ICONS = Identifier.fromNamespaceAndPath(Main.MOD_ID, "textures/gui/icons.png");
 
-        public final int index;
         public final Song song;
 
         public boolean selected, favorite;
@@ -57,9 +56,8 @@ public class SongListWidget extends ObjectSelectionList<SongListWidget.SongEntry
         private int x;
         private int y;
 
-        public SongEntry(Song song, int index) {
+        public SongEntry(Song song) {
             this.song = song;
-            this.index = index;
         }
 
         @Override
@@ -78,7 +76,7 @@ public class SongListWidget extends ObjectSelectionList<SongListWidget.SongEntry
                 context.fill(x + 1, y + 1, x + entryWidth - 1, y + entryHeight - 1, 0xFF000000);
             }
 
-            context.centeredText(client.font, song.displayName, x + entryWidth / 2, y + 5, selected ? 0xFFFFFFFF : 0xFF808080);
+            context.centeredText(client.font, song.displayName, x + entryWidth / 2, y + 5, selected ? 0xFFFFFFFF : 0xFFE0E0E0);
 
             int u = (favorite ? 26 : 0) + (isOverFavoriteButton(mouseX, mouseY) ? 13 : 0);
             context.blit(RenderPipelines.GUI_TEXTURED, ICONS, x + 2, y + 2, (float)u, 0.0f, 13, 12, 52, 12);

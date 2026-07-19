@@ -14,6 +14,12 @@ public class BlocksOverlay {
 
     private static final ItemStack NOTE_BLOCK = Blocks.NOTE_BLOCK.asItem().getDefaultInstance();
 
+    public static void hide() {
+        itemStacks = null;
+        amounts = null;
+        amountOfNoteBlocks = 0;
+    }
+
     public static void render(GuiGraphicsExtractor context, DeltaTracker tickCounter) {
         if (itemStacks != null) {
             context.fill(2, 2, 62, (itemStacks.length + 1) * 20 + 7, 0xFF16161B);

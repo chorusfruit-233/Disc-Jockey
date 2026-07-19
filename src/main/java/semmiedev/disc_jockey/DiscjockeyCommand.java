@@ -14,6 +14,7 @@ import semmiedev.disc_jockey.gui.screen.DiscJockeyScreen;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -25,8 +26,8 @@ public class DiscjockeyCommand {
 
     public static void register(CommandDispatcher<FabricClientCommandSource> commandDispatcher) {
         final ArrayList<String> instrumentNames = new ArrayList<>();
-        for (NoteBlockInstrument instrument : NoteBlockInstrument.values()) {
-            instrumentNames.add(instrument.toString().toLowerCase());
+        for (NoteBlockInstrument instrument : Note.playableInstruments()) {
+            instrumentNames.add(instrument.toString().toLowerCase(Locale.ROOT));
         }
         final ArrayList<String> instrumentNamesAndAll = new ArrayList<>(instrumentNames);
         instrumentNamesAndAll.add("all");
@@ -37,17 +38,15 @@ public class DiscjockeyCommand {
                 literal("discjockey")
                         .executes(context -> {
                             FabricClientCommandSource source = context.getSource();
-                            if (!isLoading(context)) {
-                                Minecraft client = source.getClient();
-                                client.submit(() -> client.gui.setScreen(new DiscJockeyScreen()));
-                                return 1;
-                            }
-                            return 0;
+                            Minecraft client = source.getClient();
+                            client.submit(() -> client.gui.setScreen(new DiscJockeyScreen()));
+                            return 1;
                         })
                         .then(literal("reload")
                                 .executes(context -> {
                                     if (!isLoading(context)) {
                                         context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".reloading"));
+                                        SongLoader.showToast = true;
                                         SongLoader.loadSongs();
                                         return 1;
                                     }
@@ -89,7 +88,7 @@ public class DiscjockeyCommand {
                                         .executes(context -> {
                                             Main.SONG_PLAYER.speed = FloatArgumentType.getFloat(context, "speed");
                                             context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".speed_changed", Main.SONG_PLAYER.speed));
-                                            return 0;
+                                            return 1;
                                         })
                                 )
                         )
@@ -126,7 +125,7 @@ public class DiscjockeyCommand {
                                                             String originalInstrumentStr = StringArgumentType.getString(context, "originalInstrument");
                                                             String newInstrumentStr = StringArgumentType.getString(context, "newInstrument");
                                                             @Nullable NoteBlockInstrument originalInstrument = null, newInstrument = null;
-                                                            for (NoteBlockInstrument maybeInstrument : NoteBlockInstrument.values()) {
+                                                            for (NoteBlockInstrument maybeInstrument : Note.playableInstruments()) {
                                                                 if (maybeInstrument.toString().equalsIgnoreCase(originalInstrumentStr)) {
                                                                     originalInstrument = maybeInstrument;
                                                                 }
@@ -150,13 +149,13 @@ public class DiscjockeyCommand {
 
                                                             if (originalInstrument == null) {
                                                                 // All instruments
-                                                                for (NoteBlockInstrument instrument : NoteBlockInstrument.values()) {
+                                                                for (NoteBlockInstrument instrument : Note.playableInstruments()) {
                                                                     Main.SONG_PLAYER.instrumentMap.put(instrument, newInstrument);
                                                                 }
-                                                                context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".instrument_mapped_all", newInstrumentStr.toLowerCase()));
+                                                                context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".instrument_mapped_all", newInstrumentStr.toLowerCase(Locale.ROOT)));
                                                             } else {
                                                                 Main.SONG_PLAYER.instrumentMap.put(originalInstrument, newInstrument);
-                                                                context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".instrument_mapped", originalInstrumentStr.toLowerCase(), newInstrumentStr.toLowerCase()));
+                                                                context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".instrument_mapped", originalInstrumentStr.toLowerCase(Locale.ROOT), newInstrumentStr.toLowerCase(Locale.ROOT)));
                                                             }
                                                             return 1;
                                                         })
@@ -170,7 +169,7 @@ public class DiscjockeyCommand {
                                                     String instrumentStr = StringArgumentType.getString(context, "instrument");
 
                                                     NoteBlockInstrument instrument = null;
-                                                    for (NoteBlockInstrument maybeInstrument : NoteBlockInstrument.values()) {
+                                                            for (NoteBlockInstrument maybeInstrument : Note.playableInstruments()) {
                                                         if (maybeInstrument.toString().equalsIgnoreCase(instrumentStr)) {
                                                             instrument = maybeInstrument;
                                                             break;
@@ -183,7 +182,7 @@ public class DiscjockeyCommand {
                                                     }
 
                                                     Main.SONG_PLAYER.instrumentMap.remove(instrument);
-                                                    context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".instrument_unmapped", instrumentStr.toLowerCase()));
+                                                    context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".instrument_unmapped", instrumentStr.toLowerCase(Locale.ROOT)));
                                                     return 1;
                                                 })
                                         )
@@ -201,9 +200,9 @@ public class DiscjockeyCommand {
                                                     maps.append(", ");
                                                 }
                                                 maps
-                                                        .append(entry.getKey().toString().toLowerCase())
+                                                        .append(entry.getKey().toString().toLowerCase(Locale.ROOT))
                                                         .append("->")
-                                                        .append(entry.getValue() == null ? "nothing" : entry.getValue().toString().toLowerCase());
+                                                        .append(entry.getValue() == null ? "nothing" : entry.getValue().toString().toLowerCase(Locale.ROOT));
                                             }
                                             context.getSource().sendFeedback(Component.translatable(Main.MOD_ID + ".mapped_instruments", maps.toString()));
                                             return 1;

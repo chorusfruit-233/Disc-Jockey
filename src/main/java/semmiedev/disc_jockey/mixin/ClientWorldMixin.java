@@ -10,6 +10,7 @@ import net.minecraft.util.RandomSource;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -19,11 +20,25 @@ import semmiedev.disc_jockey.Main;
 public class ClientWorldMixin {
     @Shadow @Final private Minecraft minecraft;
 
+    @Unique
+    private static boolean mixinErrorLogged;
+    @Unique
+    private static boolean omnidirectionalSoundsAvailable = true;
+
     @Inject(method = "playSound(DDDLnet/minecraft/sounds/SoundEvent;Lnet/minecraft/sounds/SoundSource;FFZJ)V", at = @At("HEAD"), cancellable = true)
     private void makeNoteBlockSoundsOmnidirectional(double x, double y, double z, SoundEvent event, SoundSource category, float volume, float pitch, boolean useDistance, long seed, CallbackInfo ci) {
-        if (((Main.config.omnidirectionalNoteBlockSounds && Main.SONG_PLAYER.running) || Main.PREVIEWER.running) && event.location().getPath().startsWith("block.note_block")) {
-            ci.cancel();
-            minecraft.getSoundManager().play(new SimpleSoundInstance(event.location(), category, volume, pitch, RandomSource.create(seed), false, 0, SoundInstance.Attenuation.NONE, 0.0, 0.0, 0.0, true));
+        if (!omnidirectionalSoundsAvailable || Main.config == null) return;
+        try {
+            if (((Main.config.omnidirectionalNoteBlockSounds && Main.SONG_PLAYER.running) || Main.PREVIEWER.running) && event.location().getPath().startsWith("block.note_block")) {
+                ci.cancel();
+                minecraft.getSoundManager().play(new SimpleSoundInstance(event.location(), category, volume, pitch, RandomSource.create(seed), false, 0, SoundInstance.Attenuation.NONE, 0.0, 0.0, 0.0, true));
+            }
+        } catch (Exception e) {
+            if (!mixinErrorLogged) {
+                Main.LOGGER.error("Omnidirectional note block sound injection failed. Disabling omnidirectional sounds for this session.", e);
+                mixinErrorLogged = true;
+            }
+            omnidirectionalSoundsAvailable = false;
         }
     }
 }

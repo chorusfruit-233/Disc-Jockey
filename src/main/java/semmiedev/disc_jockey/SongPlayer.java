@@ -37,13 +37,13 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
     private record NotePrediction(int assumedNote, long expiryTime) {}
 
     private static boolean warned;
-    public boolean running;
+    public volatile boolean running;
     public Song song;
 
     private int index;
     private double tick; // Aka song position
     private HashMap<NoteBlockInstrument, HashMap<Byte, BlockPos>> noteBlocks = null;
-    public boolean tuned;
+    public volatile boolean tuned;
     private long lastPlaybackTickAt = -1L;
 
     // Used to check and enforce packet rate limits to not get kicked
@@ -56,62 +56,101 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
     private long lastLookSentAt = -1L, lastSwingSentAt = -1L;
 
     // The thread executing the tickPlayback method
-    private Thread playbackThread = null;
+    private volatile Thread playbackThread = null;
     public long playbackLoopDelay = 5;
     // Just for external debugging purposes
     public HashMap<Block, Integer> missingInstrumentBlocks = new HashMap<>();
-    public float speed = 1.0f; // Toy
+    public volatile float speed = 1.0f; // Toy
 
     private long lastInteractAt = -1;
     private float availableInteracts = 8;
     private int tuneInitialUntunedBlocks = -1;
     private final HashMap<BlockPos, NotePrediction> notePredictions = new HashMap<>();
-    public boolean didSongReachEnd = false;
-    public boolean loopSong = false;
+    public volatile boolean didSongReachEnd = false;
+    public volatile boolean loopSong = false;
     private long pausePlaybackUntil = -1L; // Set after tuning, if configured
 
     public SongPlayer() {
-        Main.TICK_LISTENERS.add(this);
+        Main.TICK_LISTENERS.addIfAbsent(this);
     }
 
     public @NotNull HashMap<NoteBlockInstrument, @Nullable NoteBlockInstrument> instrumentMap = new HashMap<>(); // Toy
     public synchronized void startPlaybackThread() {
-        if (Main.config.disableAsyncPlayback) {
+        if (Main.config.disableAsyncPlayback || !running) {
             playbackThread = null;
             return;
         }
 
-        this.playbackThread = Thread.startVirtualThread(() -> {
-            while (this.playbackThread == Thread.currentThread()) {
+        Thread thread = Thread.ofVirtual().unstarted(() -> {
+            while (playbackThread == Thread.currentThread()) {
                 try {
-                    // Accuracy doesn't really matter at this precision imo
                     Thread.sleep(playbackLoopDelay);
-                }catch (Exception ex) {
-                    ex.printStackTrace();
+                    tickPlayback();
+                } catch (InterruptedException ignored) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Exception exception) {
+                    Main.LOGGER.error("Playback thread failed", exception);
+                    Minecraft.getInstance().execute(() -> {
+                        stop();
+                        Minecraft client = Minecraft.getInstance();
+                        if (client.gui != null) {
+                            client.gui.hud.getChat().addClientSystemMessage(Component.translatable(Main.MOD_ID + ".player.playback_failed").copy().withStyle(RED));
+                        }
+                    });
+                    break;
                 }
-                tickPlayback();
             }
         });
+        playbackThread = thread;
+        thread.start();
     }
 
     public synchronized void stopPlaybackThread() {
-        this.playbackThread = null; // Should stop on its own then
+        Thread thread = playbackThread;
+        playbackThread = null;
+        if (thread != null && thread != Thread.currentThread()) thread.interrupt();
     }
 
     public synchronized void start(Song song) {
+        if (song == null || song.notes.isEmpty()) {
+            Minecraft.getInstance().gui.hud.getChat().addClientSystemMessage(Component.translatable(Main.MOD_ID + ".player.empty_song").copy().withStyle(RED));
+            return;
+        }
         if (!Main.config.hideWarning && !warned) {
             Minecraft.getInstance().gui.hud.getChat().addClientSystemMessage(Component.translatable("disc_jockey.warning").copy().withStyle(ChatFormatting.BOLD).withStyle(RED));
             warned = true;
             return;
         }
-        if (running) stop();
+        stop();
         this.song = song;
-        //Main.LOGGER.info("Song length: " + song.length + " and tempo " + song.tempo);
-        //Main.TICK_LISTENERS.add(this);
-        if (this.playbackThread == null) startPlaybackThread();
         running = true;
-        lastPlaybackTickAt = System.currentTimeMillis();
-        last100MsSpanAt = System.currentTimeMillis();
+        resetPlaybackTimers();
+        startPlaybackThread();
+    }
+
+    public synchronized void pause() {
+        if (!running) return;
+        running = false;
+        stopPlaybackThread();
+        lastPlaybackTickAt = -1L;
+    }
+
+    public synchronized void resume() {
+        if (running || song == null) return;
+        if (didSongReachEnd || index >= song.notes.size()) {
+            start(song);
+            return;
+        }
+        running = true;
+        resetPlaybackTimers();
+        startPlaybackThread();
+    }
+
+    private void resetPlaybackTimers() {
+        long now = System.currentTimeMillis();
+        lastPlaybackTickAt = now;
+        last100MsSpanAt = now;
         last100MsSpanEstimatedPackets = 0;
         reducePacketsUntil = -1L;
         stopPacketsUntil = -1L;
@@ -122,7 +161,6 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
     }
 
     public synchronized void stop() {
-        //MinecraftClient.getInstance().send(() -> Main.TICK_LISTENERS.remove(this));
         stopPlaybackThread();
         running = false;
         index = 0;
@@ -138,6 +176,9 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
         stopPacketsUntil = -1L;
         lastLookSentAt = -1L;
         lastSwingSentAt = -1L;
+        lastInteractAt = -1L;
+        availableInteracts = 8;
+        pausePlaybackUntil = -1L;
         didSongReachEnd = false; // Change after running stop() if actually ended cleanly
     }
 
@@ -160,6 +201,10 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
             if (pausePlaybackUntil != -1L && System.currentTimeMillis() <= pausePlaybackUntil) return;
             while (running) {
                 Minecraft client = Minecraft.getInstance();
+                if (client.player == null || client.getConnection() == null) {
+                    stop();
+                    return;
+                }
                 GameType gameType = client.gameMode == null ? null : client.gameMode.getPlayerMode();
                 // In the best case, gameMode would only be queried in sync Ticks, no here
                 if (gameType == null || !gameType.isSurvival()) {
@@ -168,10 +213,16 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                     return;
                 }
 
-                long note = song.notes[index];
+                if (index >= song.notes.size()) {
+                    finishSong();
+                    break;
+                }
+                SongNote songNote = song.notes.get(index);
                 final long now = System.currentTimeMillis();
-                if ((short)note <= Math.round(tick)) {
-                    @Nullable BlockPos blockPos = noteBlocks.get(Note.INSTRUMENTS[(byte)(note >> Note.INSTRUMENT_SHIFT)]).get((byte)(note >> Note.NOTE_SHIFT));
+                if (songNote.tick() <= Math.round(tick)) {
+                    Note note = songNote.note();
+                    HashMap<Byte, BlockPos> instrumentNotes = noteBlocks.get(note.instrument());
+                    @Nullable BlockPos blockPos = instrumentNotes == null ? null : instrumentNotes.get(note.note());
                     if (blockPos == null) {
                         // Instrument got likely mapped to "nothing". Skip it
                         index++;
@@ -210,7 +261,9 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                         reducePacketsUntil = Math.max(reducePacketsUntil, now + 500);
                     }
                     if ((lastSwingSentAt == -1L || now - lastSwingSentAt >= 50) &&last100MsSpanEstimatedPackets < last100MsReducePacketsAfter && (reducePacketsUntil == -1L || reducePacketsUntil < now)) {
-                        client.submit(() -> client.player.swing(InteractionHand.MAIN_HAND));
+                        client.submit(() -> {
+                            if (client.player != null) client.player.swing(InteractionHand.MAIN_HAND);
+                        });
                         lastSwingSentAt = now;
                         last100MsSpanEstimatedPackets++;
                     } else if (last100MsSpanEstimatedPackets  >= last100MsReducePacketsAfter){
@@ -218,12 +271,8 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                     }
 
                     index++;
-                    if (index >= song.notes.length) {
-                        stop();
-                        didSongReachEnd = true;
-                        if (loopSong) {
-                            start(song);
-                        }
+                    if (index >= song.notes.size()) {
+                        finishSong();
                         break;
                     }
                 } else {
@@ -238,8 +287,16 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
         }
     }
 
+    private void finishSong() {
+        Song finishedSong = song;
+        boolean restart = loopSong;
+        stop();
+        didSongReachEnd = true;
+        if (restart && finishedSong != null) start(finishedSong);
+    }
+
     @Override
-    public void onStartTick(@NonNull ClientLevel world) {
+    public synchronized void onStartTick(@NonNull ClientLevel world) {
         Minecraft client = Minecraft.getInstance();
         if (client.level == null || client.player == null) return;
         if (song == null || !running) return;
@@ -254,7 +311,7 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
 
             // Create list of available noteblock positions per used instrument
             HashMap<NoteBlockInstrument, ArrayList<BlockPos>> noteblocksForInstrument = new HashMap<>();
-            for (NoteBlockInstrument instrument : NoteBlockInstrument.values())
+            for (NoteBlockInstrument instrument : Note.playableInstruments())
                 noteblocksForInstrument.put(instrument, new ArrayList<>());
             final Vec3 playerEyePos = player.getEyePosition();
 
@@ -269,21 +326,19 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                 if (offset != 0) orderedOffsets.add(offset * -1);
             }
 
-            for (NoteBlockInstrument instrument : noteblocksForInstrument.keySet().toArray(new NoteBlockInstrument[0])) {
-                for (int y : orderedOffsets) {
-                    for (int x : orderedOffsets) {
-                        for (int z : orderedOffsets) {
-                            Vec3 vec3d = playerEyePos.add(x, y, z);
-                            BlockPos blockPos = BlockPos.containing(vec3d.x, vec3d.y, vec3d.z);
-                            if (!canInteractWith(player, blockPos))
-                                continue;
-                            BlockState blockState = world.getBlockState(blockPos);
-                            if (blockState.getBlock() != Blocks.NOTE_BLOCK || !world.isEmptyBlock(blockPos.above()))
-                                continue;
+            for (int y : orderedOffsets) {
+                for (int x : orderedOffsets) {
+                    for (int z : orderedOffsets) {
+                        Vec3 position = playerEyePos.add(x, y, z);
+                        BlockPos blockPos = BlockPos.containing(position.x, position.y, position.z);
+                        if (!canInteractWith(player, blockPos)) continue;
 
-                            if (blockState.getValue(BlockStateProperties.NOTEBLOCK_INSTRUMENT) == instrument)
-                                noteblocksForInstrument.get(instrument).add(blockPos);
-                        }
+                        BlockState blockState = world.getBlockState(blockPos);
+                        if (blockState.getBlock() != Blocks.NOTE_BLOCK || !world.isEmptyBlock(blockPos.above())) continue;
+
+                        NoteBlockInstrument instrument = blockState.getValue(BlockStateProperties.NOTEBLOCK_INSTRUMENT);
+                        ArrayList<BlockPos> blocks = noteblocksForInstrument.get(instrument);
+                        if (blocks != null) blocks.add(blockPos);
                     }
                 }
             }
@@ -291,7 +346,7 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
             // Remap instruments for funzies
             if (!instrumentMap.isEmpty()) {
                 HashMap<NoteBlockInstrument, ArrayList<BlockPos>> newNoteblocksForInstrument = new HashMap<>();
-                for (NoteBlockInstrument orig : noteblocksForInstrument.keySet()) {
+                for (NoteBlockInstrument orig : Note.playableInstruments()) {
                     NoteBlockInstrument mappedInstrument = instrumentMap.getOrDefault(orig, orig);
                     if (mappedInstrument == null) {
                         // Instrument got likely mapped to "nothing"
@@ -299,7 +354,7 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                         continue;
                     }
 
-                    newNoteblocksForInstrument.put(orig, noteblocksForInstrument.getOrDefault(instrumentMap.getOrDefault(orig, orig), new ArrayList<>()));
+                    newNoteblocksForInstrument.put(orig, noteblocksForInstrument.getOrDefault(mappedInstrument, new ArrayList<>()));
                 }
                 noteblocksForInstrument = newNoteblocksForInstrument;
             }
@@ -344,7 +399,8 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                 for (Note note : missingNotes) {
                     NoteBlockInstrument mappedInstrument = instrumentMap.getOrDefault(note.instrument(), note.instrument());
                     if (mappedInstrument == null) continue; // Ignore if mapped to nothing
-                    Block block = Note.INSTRUMENT_BLOCKS.get(mappedInstrument);
+                    Block block = Note.instrumentBlock(mappedInstrument);
+                    if (block == null) continue;
                     Integer got = missing.get(block);
                     if (got == null) got = 0;
                     missing.put(block, got + 1);
@@ -381,9 +437,8 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                 BlockPos blockPos = noteBlocks.get(note.instrument()).get(note.note());
                 if (blockPos == null) continue;
                 BlockState blockState = world.getBlockState(blockPos);
-                int assumedNote = notePredictions.containsKey(blockPos) ? notePredictions.get(blockPos).assumedNote() : blockState.getValue(BlockStateProperties.NOTE);
-
                 if (blockState.hasProperty(BlockStateProperties.NOTE)) {
+                    int assumedNote = notePredictions.containsKey(blockPos) ? notePredictions.get(blockPos).assumedNote() : blockState.getValue(BlockStateProperties.NOTE);
                     if (assumedNote == note.note() && blockState.getValue(BlockStateProperties.NOTE) == note.note())
                         fullyTunedBlocks++;
                     if (assumedNote != note.note()) {
@@ -399,13 +454,15 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                     break;
                 }
             }
+            if (noteBlocks == null) return;
 
             if (tuneInitialUntunedBlocks == -1 || tuneInitialUntunedBlocks < untunedNotes.size())
                 tuneInitialUntunedBlocks = untunedNotes.size();
 
             int existingUniqueNotesCount = 0;
             for (Note n : song.uniqueNotes) {
-                if (noteBlocks.get(n.instrument()).get(n.note()) != null)
+                HashMap<Byte, BlockPos> notes = noteBlocks.get(n.instrument());
+                if (notes != null && notes.get(n.note()) != null)
                     existingUniqueNotesCount++;
             }
 
@@ -413,7 +470,7 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
                 // Wait roundrip + 100ms before considering tuned after changing notes (in case the server rejects an interact)
                 if (lastInteractAt == -1 || System.currentTimeMillis() - lastInteractAt >= ping * 2L + 100) {
                     tuned = true;
-                    pausePlaybackUntil = System.currentTimeMillis() + (long) (Math.abs(Main.config.delayPlaybackStartBySecs) * 1000);
+                    pausePlaybackUntil = System.currentTimeMillis() + (long) (Math.max(0, Main.config.delayPlaybackStartBySecs) * 1000);
                     tuneInitialUntunedBlocks = -1;
                     // Tuning finished
                 }
@@ -421,7 +478,6 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
 
             BlockPos lastBlockPos = null;
             int lastTunedNote = Integer.MIN_VALUE;
-            float roughTuneProgress = 1 - (untunedNotes.size() / Math.max(tuneInitialUntunedBlocks + 0f, 1f));
             while (availableInteracts >= 1f && !untunedNotes.isEmpty()) {
                 BlockPos blockPos = null;
                 int searches = 0;
@@ -472,8 +528,8 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
             // Sync playback (off by default). Replacement for playback thread
             try {
                 tickPlayback();
-            }catch (Exception ex) {
-                ex.printStackTrace();
+            } catch (Exception exception) {
+                Main.LOGGER.error("Synchronous playback failed", exception);
                 stop();
             }
         }
@@ -503,18 +559,18 @@ public class SongPlayer implements ClientTickEvents.StartLevelTick {
         };
     }
 
-    public double getSongElapsedSeconds() {
+    public synchronized double getSongElapsedSeconds() {
         if (song == null) return 0;
         return song.ticksToMilliseconds(tick) / 1000;
     }
 
     public synchronized void setSongElapsedSeconds(double seconds) {
         if (song == null) return;
-        tick = song.millisecondsToTicks((long)(seconds * 1000));
+        double clampedSeconds = Math.clamp(seconds, 0, song.getLengthInSeconds());
+        tick = song.millisecondsToTicks((long)(clampedSeconds * 1000));
         index = 0;
-        for (int i = 0; i < song.notes.length; i++) {
-            if ((short)song.notes[i] > Math.round(tick)) break;
-            index = i;
-        }
+        while (index < song.notes.size() && song.notes.get(index).tick() < Math.round(tick)) index++;
+        didSongReachEnd = index >= song.notes.size();
+        lastPlaybackTickAt = System.currentTimeMillis();
     }
 }

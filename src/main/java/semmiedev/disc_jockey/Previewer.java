@@ -11,17 +11,19 @@ public class Previewer implements ClientTickEvents.StartLevelTick {
     public boolean running;
 
     private int i;
-    private float tick;
+    private double tick;
     private Song song;
 
     public void start(Song song) {
+        stop();
+        if (song == null || song.notes.isEmpty()) return;
         this.song = song;
-        Main.TICK_LISTENERS.add(this);
+        Main.TICK_LISTENERS.addIfAbsent(this);
         running = true;
     }
 
     public void stop() {
-        Minecraft.getInstance().submit(() -> Main.TICK_LISTENERS.remove(this));
+        Main.TICK_LISTENERS.remove(this);
         running = false;
         i = 0;
         tick = 0;
@@ -29,13 +31,17 @@ public class Previewer implements ClientTickEvents.StartLevelTick {
 
     @Override
     public void onStartTick(@NonNull ClientLevel world) {
-        while (running) {
-            long note = song.notes[i];
-            if ((short)note == Math.round(tick)) {
-                Vec3 pos = Minecraft.getInstance().player.position();
-                world.playLocalSound(pos.x, pos.y, pos.z, Note.INSTRUMENTS[(byte)(note >> Note.INSTRUMENT_SHIFT)].getSoundEvent().value(), SoundSource.RECORDS, 3, (float)Math.pow(2.0, ((byte)(note >> Note.NOTE_SHIFT) - 12) / 12.0), false);
+        Minecraft client = Minecraft.getInstance();
+        if (!running || song == null || client.player == null) return;
+
+        while (running && i < song.notes.size()) {
+            SongNote songNote = song.notes.get(i);
+            if (songNote.tick() <= Math.round(tick)) {
+                Vec3 pos = client.player.position();
+                Note note = songNote.note();
+                world.playLocalSound(pos.x, pos.y, pos.z, note.instrument().getSoundEvent().value(), SoundSource.RECORDS, 3, (float)Math.pow(2.0, (note.note() - 12) / 12.0), false);
                 i++;
-                if (i >= song.notes.length) {
+                if (i >= song.notes.size()) {
                     stop();
                     break;
                 }
@@ -43,7 +49,6 @@ public class Previewer implements ClientTickEvents.StartLevelTick {
                 break;
             }
         }
-
-        tick += song.tempo / 100f / 20f;
+        if (running) tick += song.tempo / 100.0 / 20.0;
     }
 }

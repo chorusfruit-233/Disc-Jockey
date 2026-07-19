@@ -35,6 +35,7 @@ public class SongTimeSliderWidget extends AbstractSliderButton {
     protected void applyValue() {
         if (Main.SONG_PLAYER.song == null) return;
         double total = Main.SONG_PLAYER.song.getLengthInSeconds();
+        if (!Double.isFinite(total) || total <= 0) return;
         double seconds = this.value * total;
         Main.SONG_PLAYER.setSongElapsedSeconds(seconds);
     }
@@ -43,7 +44,7 @@ public class SongTimeSliderWidget extends AbstractSliderButton {
         if (Main.SONG_PLAYER.song == null) return;
         double elapsed = Main.SONG_PLAYER.getSongElapsedSeconds();
         double total = Main.SONG_PLAYER.song.getLengthInSeconds();
-        this.value = elapsed / total;
+        this.value = !Double.isFinite(total) || total <= 0 ? 0 : Math.clamp(elapsed / total, 0, 1);
         updateMessage();
     }
 }

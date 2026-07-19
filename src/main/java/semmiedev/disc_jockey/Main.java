@@ -10,7 +10,6 @@ import net.fabricmc.fabric.api.client.keymapping.v1.KeyMappingHelper;
 import net.fabricmc.fabric.api.client.networking.v1.ClientLoginConnectionEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
 import net.fabricmc.loader.api.FabricLoader;
-import net.minecraft.ChatFormatting;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -24,18 +23,20 @@ import org.lwjgl.glfw.GLFW;
 import semmiedev.disc_jockey.gui.hud.BlocksOverlay;
 import semmiedev.disc_jockey.gui.screen.DiscJockeyScreen;
 
-import java.io.File;
-import java.util.ArrayList;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class Main implements ClientModInitializer {
     public static final String MOD_ID = "disc_jockey";
     public static final MutableComponent NAME = Component.literal("Disc Jockey");
     public static final Logger LOGGER = LogManager.getLogger("Disc Jockey");
-    public static final ArrayList<ClientTickEvents.StartLevelTick> TICK_LISTENERS = new ArrayList<>();
+    public static final CopyOnWriteArrayList<ClientTickEvents.StartLevelTick> TICK_LISTENERS = new CopyOnWriteArrayList<>();
     public static final Previewer PREVIEWER = new Previewer();
     public static final SongPlayer SONG_PLAYER = new SongPlayer();
 
-    public static File songsFolder;
+    public static Path songsFolder;
     public static Config config;
     public static ConfigHolder<Config> configHolder;
 
@@ -44,8 +45,12 @@ public class Main implements ClientModInitializer {
         configHolder = AutoConfig.register(Config.class, JanksonConfigSerializer::new);
         config = configHolder.getConfig();
 
-        songsFolder = new File(FabricLoader.getInstance().getConfigDir() + File.separator + MOD_ID + File.separator + "songs");
-        if (!songsFolder.isDirectory()) songsFolder.mkdirs();
+        songsFolder = FabricLoader.getInstance().getConfigDir().resolve(MOD_ID).resolve("songs");
+        try {
+            Files.createDirectories(songsFolder);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Unable to create Disc Jockey song directory " + songsFolder, exception);
+        }
 
         SongLoader.loadSongs();
 
@@ -59,22 +64,18 @@ public class Main implements ClientModInitializer {
                 if (prevLevel != client.level) {
                     PREVIEWER.stop();
                     SONG_PLAYER.stop();
+                    BlocksOverlay.hide();
                 }
                 prevLevel = client.level;
 
                 if (openScreenKeyBind.consumeClick()) {
-                    if (SongLoader.loadingSongs) {
-                        client.gui.hud.getChat().addClientSystemMessage(Component.translatable(Main.MOD_ID + ".still_loading").copy().withStyle(ChatFormatting.RED));
-                        SongLoader.showToast = true;
-                    } else {
-                        client.gui.setScreen(new DiscJockeyScreen());
-                    }
+                    client.gui.setScreen(new DiscJockeyScreen());
                 }
             }
         });
 
         ClientTickEvents.START_LEVEL_TICK.register(world -> {
-            for (ClientTickEvents.StartLevelTick listener : new ArrayList<>(TICK_LISTENERS)) listener.onStartTick(world);
+            for (ClientTickEvents.StartLevelTick listener : TICK_LISTENERS) listener.onStartTick(world);
         });
 
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, _) -> DiscjockeyCommand.register(dispatcher));
@@ -82,6 +83,7 @@ public class Main implements ClientModInitializer {
         ClientLoginConnectionEvents.DISCONNECT.register((_, _) -> {
             PREVIEWER.stop();
             SONG_PLAYER.stop();
+            BlocksOverlay.hide();
         });
 
         HudElementRegistry.addLast(Identifier.fromNamespaceAndPath(Main.MOD_ID, "blocks_overlay"), BlocksOverlay::render);
